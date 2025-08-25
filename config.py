@@ -7,16 +7,16 @@ NUM_WEEKS = 15
 NUM_WAGERS_PER_WEEK = 10
 
 USERS = [
-    "User 1",
-    "User 2", 
-    "User 3",
-    "User 4",
-    "User 5",
-    "User 6",
-    "User 7",
-    "User 8",
-    "User 9",
-    "User 10"
+    "A.J. Wolfe",
+    "Clark Lee", 
+    "Clayton Horan",
+    "Kyle Francis",
+    "Preston 'OP' Browne",
+    "Preston Young",
+    "Tanner Nordeen",
+    "Teddy MacDonell",
+    "Trask Bottum",
+    "Zaq Levick"
 ]
 
 DB_PATH = "data/wagers.db"

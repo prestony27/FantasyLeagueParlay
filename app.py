@@ -78,17 +78,16 @@ def render_wager_grid(week_num: int, wagers: pd.DataFrame):
     st.subheader(f"Week {week_num} Wager Selections")
     
     with st.form(f"week_{week_num}_wagers"):
-        col1, col2, col3, col4, col5, col6 = st.columns([0.5, 0.8, 1, 3, 1.5, 1])
+        col1, col2, col3, col4, col5 = st.columns([0.5, 0.8, 1, 3, 1.5])
         col1.write("**#**")
         col2.write("**+/-**")
         col3.write("**Odds**")
         col4.write("**Wager Detail**")
         col5.write("**User**")
-        col6.write("**Status**")
         
         wager_inputs = []
         for i in range(1, 11):
-            col1, col2, col3, col4, col5, col6 = st.columns([0.5, 0.8, 1, 3, 1.5, 1])
+            col1, col2, col3, col4, col5 = st.columns([0.5, 0.8, 1, 3, 1.5])
             
             existing_row = wagers[wagers['position'] == i]
             existing = existing_row.iloc[0] if len(existing_row) > 0 else None
@@ -155,29 +154,13 @@ def render_wager_grid(week_num: int, wagers: pd.DataFrame):
                     label_visibility="collapsed"
                 )
             
-            with col6:
-                status_idx = 0
-                if existing is not None and pd.notna(existing['status']):
-                    try:
-                        status_idx = STATUS_OPTIONS.index(existing['status'])
-                    except ValueError:
-                        status_idx = 0
-                
-                status = st.selectbox(
-                    f"Status {i}",
-                    options=STATUS_OPTIONS,
-                    index=status_idx,
-                    key=f"status_{week_num}_{i}",
-                    label_visibility="collapsed"
-                )
-            
             wager_inputs.append({
                 'position': i,
                 'moneyline_symbol': symbol if symbol else None,
                 'moneyline_value': odds_value if symbol else None,
                 'wager_detail': detail,
                 'user': user if user else None,
-                'status': status
+                'status': 'pending'
             })
         
         submitted = st.form_submit_button("Save All Wagers", type="primary", use_container_width=True)
@@ -191,13 +174,13 @@ def render_action_buttons(week_num: int):
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        if st.button(f"Clear Week {week_num}", type="secondary", use_container_width=True):
+        if st.button(f"Clear Week {week_num}", type="secondary", use_container_width=True, key=f"clear_week_{week_num}"):
             st.session_state.data_manager.clear_week(week_num)
             st.success(f"Week {week_num} cleared!")
             st.rerun()
     
     with col2:
-        if st.button(f"Copy from Previous Week", use_container_width=True):
+        if st.button(f"Copy from Previous Week", use_container_width=True, key=f"copy_week_{week_num}"):
             if week_num > 1:
                 st.session_state.data_manager.copy_week_wagers(week_num - 1, week_num)
                 st.success(f"Copied from Week {week_num - 1} to Week {week_num}!")
@@ -213,11 +196,12 @@ def render_action_buttons(week_num: int):
             data=csv_data,
             file_name=f"week_{week_num}_wagers.csv",
             mime="text/csv",
-            use_container_width=True
+            use_container_width=True,
+            key=f"export_week_{week_num}"
         )
     
     with col4:
-        if st.button(f"Refresh Data", use_container_width=True):
+        if st.button(f"Refresh Data", use_container_width=True, key=f"refresh_week_{week_num}"):
             st.rerun()
 
 if __name__ == "__main__":
