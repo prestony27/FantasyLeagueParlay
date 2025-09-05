@@ -68,14 +68,31 @@ class DataManager:
         df = pd.read_sql_query(query, conn, params=(week_num,))
         conn.close()
         
-        if df.empty:
+        # Check if we need to apply default wagers (empty dataframe or no users assigned)
+        needs_defaults = df.empty or df['user'].isna().all() or (df['user'] == '').all()
+        
+        if needs_defaults:
+            # Default wager combinations
+            default_wagers = [
+                ("A.J. Wolfe", "Joe Burrow over X passing yards"),
+                ("Clark Lee", "Lamar Jackson over X passing yards"),
+                ("Clayton Horan", "C.J. Stroud over X passing yards"),
+                ("Kyle Francis", "Brock Purdy over X passing yards"),
+                ("Preston 'OP' Browne", "Bo Nix over X passing yards"),
+                ("Preston Young", "Patrick Mahomes over X passing yards"),
+                ("Tanner Nordeen", "Jalen Hurts over X passing yards"),
+                ("Teddy MacDonell", "Jayden Daniels over X passing yards"),
+                ("Trask Bottum", "Baker Mayfield over X passing yards"),
+                ("Zaq Levick", "Josh Allen over X passing yards")
+            ]
+            
             df = pd.DataFrame({
                 'week_number': [week_num] * 10,
                 'position': list(range(1, 11)),
-                'user': [None] * 10,
-                'moneyline_symbol': [None] * 10,
-                'moneyline_value': [None] * 10,
-                'wager_detail': [''] * 10,
+                'user': [wager[0] for wager in default_wagers],
+                'moneyline_symbol': ['-'] * 10,
+                'moneyline_value': [110] * 10,
+                'wager_detail': [wager[1] for wager in default_wagers],
                 'status': ['pending'] * 10,
                 'updated_at': [None] * 10
             })

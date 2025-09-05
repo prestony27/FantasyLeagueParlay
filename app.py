@@ -19,9 +19,9 @@ def main():
     current_week = get_current_nfl_week()
     st.info(f"Current NFL Week: {current_week}")
     
-    week_tabs = st.tabs([f"Week {i}" for i in range(1, NUM_WEEKS + 1)])
+    week_tabs = st.tabs([f"Week {i}" for i in range(2, NUM_WEEKS + 1)])
     
-    for week_num, tab in enumerate(week_tabs, 1):
+    for week_num, tab in enumerate(week_tabs, 2):
         with tab:
             render_week_dashboard(week_num)
 
