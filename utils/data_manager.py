@@ -69,7 +69,15 @@ class DataManager:
         conn.close()
         
         # Check if we need to apply default wagers (empty dataframe or no users assigned)
-        needs_defaults = df.empty or df['user'].isna().all() or (df['user'] == '').all()
+        needs_defaults = True
+        if not df.empty:
+            # Check if any row has meaningful user data
+            has_users = False
+            for user_val in df['user']:
+                if pd.notna(user_val) and str(user_val).strip() != '':
+                    has_users = True
+                    break
+            needs_defaults = not has_users
         
         if needs_defaults:
             # Default wager combinations
