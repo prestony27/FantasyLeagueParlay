@@ -34,9 +34,11 @@ def initialize_session_state():
 def render_week_dashboard(week_num: int):
     wagers = st.session_state.data_manager.load_week_wagers(week_num)
     
-    render_parlay_summary(wagers)
+    # Create placeholder for parlay summary that will be updated with form values
+    parlay_placeholder = st.empty()
+    
     st.divider()
-    render_wager_grid(week_num, wagers)
+    render_wager_grid(week_num, wagers, parlay_placeholder)
     st.divider()
     render_action_buttons(week_num)
 
@@ -51,18 +53,25 @@ def render_parlay_summary(wagers: pd.DataFrame):
     with col2:
         valid_wagers = []
         for _, row in wagers.iterrows():
-            if (pd.notna(row['moneyline_symbol']) and 
-                pd.notna(row['moneyline_value']) and 
-                row['moneyline_symbol'] and 
-                row['moneyline_value']):
-                valid_wagers.append((row['moneyline_symbol'], row['moneyline_value']))
+            symbol = row['moneyline_symbol']
+            value = row['moneyline_value']
+            
+            # Handle both string and numeric values, and None values
+            if (symbol is not None and str(symbol).strip() in ['+', '-'] and 
+                value is not None and str(value).strip() != ''):
+                try:
+                    numeric_value = int(float(str(value)))
+                    if numeric_value >= 100:  # Valid odds range
+                        valid_wagers.append((str(symbol).strip(), numeric_value))
+                except (ValueError, TypeError):
+                    continue
         
         if valid_wagers and len(valid_wagers) == 10:
             decimal_odds = st.session_state.calculator.calculate_parlay_odds(valid_wagers)
             payout = st.session_state.calculator.calculate_payout(WAGER_AMOUNT, decimal_odds)
             st.metric("Potential Payout", format_currency(payout))
         else:
-            st.metric("Potential Payout", "$0.00")
+            st.metric("Potential Payout", f"$0.00 ({len(valid_wagers)}/10)")
     
     with col3:
         if valid_wagers and len(valid_wagers) == 10:
@@ -74,7 +83,7 @@ def render_parlay_summary(wagers: pd.DataFrame):
         completed = len(wagers[(wagers['user'].notna()) & (wagers['user'] != '')])
         st.metric("Wagers Completed", f"{completed}/10")
 
-def render_wager_grid(week_num: int, wagers: pd.DataFrame):
+def render_wager_grid(week_num: int, wagers: pd.DataFrame, parlay_placeholder):
     st.subheader(f"Week {week_num} Wager Selections")
     
     with st.form(f"week_{week_num}_wagers"):
@@ -162,6 +171,11 @@ def render_wager_grid(week_num: int, wagers: pd.DataFrame):
                 'user': user if user else None,
                 'status': 'pending'
             })
+        
+        # Calculate parlay odds based on current form values
+        current_wagers_df = pd.DataFrame(wager_inputs)
+        with parlay_placeholder.container():
+            render_parlay_summary(current_wagers_df)
         
         submitted = st.form_submit_button("Save All Wagers", type="primary", use_container_width=True)
         

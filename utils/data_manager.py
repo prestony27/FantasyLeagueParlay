@@ -12,6 +12,8 @@ class DataManager:
         self.users = USERS
         self.gc = None
         self.sheet = None
+        self._cache = {}  # Simple cache for API responses
+        self._cache_time = {}  # Track cache timestamps
         self.init_google_sheets()
     
     def init_google_sheets(self):
@@ -70,6 +72,15 @@ class DataManager:
         if not self.sheet:
             return self._get_default_wagers_df(week_num)
         
+        # Check cache first (cache for 30 seconds)
+        cache_key = f"week_{week_num}"
+        current_time = datetime.now().timestamp()
+        
+        if (cache_key in self._cache and 
+            cache_key in self._cache_time and
+            current_time - self._cache_time[cache_key] < 30):
+            return self._cache[cache_key].copy()
+        
         try:
             # Get all data from sheet
             all_data = self.sheet.get_all_records()
@@ -98,19 +109,54 @@ class DataManager:
                 week_df = pd.DataFrame()
             
             # Check if we need to apply default wagers
+            # We should use saved data if we have meaningful wager data (not just users)
             needs_defaults = True
-            if not week_df.empty:
-                has_users = False
-                for user_val in week_df['user']:
-                    if pd.notna(user_val) and str(user_val).strip() != '':
-                        has_users = True
+            if not week_df.empty and len(week_df) >= 10:
+                # Check if we have actual wager data (users AND moneyline values)
+                has_meaningful_data = False
+                for _, row in week_df.iterrows():
+                    user_val = row.get('user', '')
+                    moneyline_val = row.get('moneyline_value', '')
+                    if (pd.notna(user_val) and str(user_val).strip() != '' and
+                        pd.notna(moneyline_val) and str(moneyline_val).strip() != ''):
+                        has_meaningful_data = True
                         break
-                needs_defaults = not has_users
+                needs_defaults = not has_meaningful_data
+                
+                # If we have meaningful data, ensure we have all 10 positions
+                if not needs_defaults:
+                    # Fill in any missing positions with empty data
+                    all_positions = set(range(1, 11))
+                    existing_positions = set(week_df['position'].astype(int))
+                    missing_positions = all_positions - existing_positions
+                    
+                    if missing_positions:
+                        # Add missing positions as empty rows
+                        missing_rows = []
+                        for pos in missing_positions:
+                            missing_rows.append({
+                                'week_number': week_num,
+                                'position': pos,
+                                'user': '',
+                                'moneyline_symbol': '',
+                                'moneyline_value': '',
+                                'wager_detail': '',
+                                'status': 'pending',
+                                'updated_at': ''
+                            })
+                        week_df = pd.concat([week_df, pd.DataFrame(missing_rows)], ignore_index=True)
+                        week_df = week_df.sort_values('position')
             
             if needs_defaults:
-                return self._get_default_wagers_df(week_num)
+                result = self._get_default_wagers_df(week_num)
+            else:
+                result = week_df
             
-            return week_df
+            # Cache the result
+            self._cache[cache_key] = result.copy()
+            self._cache_time[cache_key] = current_time
+            
+            return result
             
         except Exception as e:
             st.error(f"Error loading data from Google Sheets: {e}")
@@ -157,6 +203,13 @@ class DataManager:
             # First, remove existing data for this week
             self.clear_week(week_num)
             
+            # Clear cache for this week since we're updating data
+            cache_key = f"week_{week_num}"
+            if cache_key in self._cache:
+                del self._cache[cache_key]
+            if cache_key in self._cache_time:
+                del self._cache_time[cache_key]
+            
             # Prepare rows to append
             rows_to_add = []
             for wager_data in wagers_list:
@@ -189,9 +242,9 @@ class DataManager:
             all_data = self.sheet.get_all_values()
             rows_to_delete = []
             
-            # Find rows with matching week number (skip header row)
+            # Skip header row (row 1) - only delete data rows
             for i, row in enumerate(all_data[1:], start=2):
-                if row and str(row[0]) == str(week_num):
+                if row and len(row) > 0 and str(row[0]) == str(week_num):
                     rows_to_delete.append(i)
             
             # Delete rows in reverse order to maintain indices
