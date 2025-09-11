@@ -19,8 +19,7 @@ USERS = [
     "Zaq Levick"
 ]
 
-DB_PATH = "data/wagers.db"
-BACKUP_PATH = "data/backups/"
+# Google Sheets configuration will be handled via Streamlit secrets
 
 CURRENCY_FORMAT = "${:,.2f}"
 ODDS_FORMAT = "{}{}"

@@ -1,170 +1,213 @@
-import sqlite3
+import gspread
 import pandas as pd
 from datetime import datetime
 from typing import List, Dict, Optional
-import os
-from config import USERS, DB_PATH
+import streamlit as st
+from google.oauth2.service_account import Credentials
+from config import USERS
 
 class DataManager:
     
-    def __init__(self, db_path: str = DB_PATH):
-        self.db_path = db_path
+    def __init__(self):
         self.users = USERS
-        self.init_database()
+        self.gc = None
+        self.sheet = None
+        self.init_google_sheets()
     
-    def init_database(self):
-        """Initialize SQLite database with tables"""
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS wagers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                week_number INTEGER NOT NULL,
-                position INTEGER NOT NULL CHECK (position BETWEEN 1 AND 10),
-                user TEXT,
-                moneyline_symbol TEXT CHECK (moneyline_symbol IN ('+', '-', NULL)),
-                moneyline_value INTEGER,
-                wager_detail TEXT,
-                status TEXT DEFAULT 'pending',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(week_number, position)
-            )
-        ''')
-        
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT UNIQUE NOT NULL,
-                display_name TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        for i, user in enumerate(self.users, 1):
-            cursor.execute('''
-                INSERT OR IGNORE INTO users (username, display_name) 
-                VALUES (?, ?)
-            ''', (f"user_{i}", user))
-        
-        conn.commit()
-        conn.close()
+    def init_google_sheets(self):
+        """Initialize Google Sheets connection"""
+        try:
+            # Try to get credentials from Streamlit secrets first, but catch all errors
+            secrets_worked = False
+            try:
+                # Check if we're in Streamlit Cloud environment
+                if hasattr(st, 'secrets'):
+                    # Try to access secrets - this might raise an error
+                    secrets_dict = dict(st.secrets)
+                    if 'gcp_service_account' in secrets_dict:
+                        # Check if it's a placeholder or real credentials
+                        gcp_config = st.secrets["gcp_service_account"]
+                        if isinstance(gcp_config, dict) and 'use_json_file' not in gcp_config:
+                            credentials = Credentials.from_service_account_info(
+                                gcp_config,
+                                scopes=[
+                                    "https://www.googleapis.com/auth/spreadsheets",
+                                    "https://www.googleapis.com/auth/drive"
+                                ]
+                            )
+                            self.gc = gspread.authorize(credentials)
+                            secrets_worked = True
+            except Exception:
+                # Any exception means we should try local files
+                secrets_worked = False
+            
+            # If secrets didn't work, try local files
+            if not secrets_worked:
+                try:
+                    # Try the specific filename first
+                    self.gc = gspread.service_account(filename='fantasyleagueparlay-db08b4958741.json')
+                except FileNotFoundError:
+                    try:
+                        # Try generic filename
+                        self.gc = gspread.service_account(filename='service_account.json')
+                    except FileNotFoundError:
+                        st.error("Google Sheets credentials not found. Please check setup instructions.")
+                        return
+            
+            # Try to open existing sheet or create new one
+            sheet_name = "Fantasy League Parlay Data"
+            try:
+                self.spreadsheet = self.gc.open(sheet_name)
+                self.sheet = self.spreadsheet.sheet1
+                st.success(f"Connected to existing Google Sheet: {self.spreadsheet.url}")
+            except gspread.SpreadsheetNotFound:
+                # Create new spreadsheet
+                self.spreadsheet = self.gc.create(sheet_name)
+                self.sheet = self.spreadsheet.sheet1
+                # Initialize headers
+                headers = ['Week', 'Position', 'User', 'Moneyline_Symbol', 'Moneyline_Value', 'Wager_Detail', 'Status', 'Updated_At']
+                self.sheet.append_row(headers)
+                st.success(f"Created new Google Sheet: {self.spreadsheet.url}")
+                st.info("📝 Bookmark this URL to easily access your data!")
+                
+        except Exception as e:
+            st.error(f"Failed to initialize Google Sheets: {e}")
     
     def load_week_wagers(self, week_num: int) -> pd.DataFrame:
-        """Load all wagers for a specific week"""
-        conn = sqlite3.connect(self.db_path)
+        """Load all wagers for a specific week from Google Sheets"""
+        if not self.sheet:
+            return self._get_default_wagers_df(week_num)
         
-        query = '''
-            SELECT week_number, position, user, moneyline_symbol, 
-                   moneyline_value, wager_detail, status, updated_at
-            FROM wagers 
-            WHERE week_number = ?
-            ORDER BY position
-        '''
-        
-        df = pd.read_sql_query(query, conn, params=(week_num,))
-        conn.close()
-        
-        # Check if we need to apply default wagers (empty dataframe or no users assigned)
-        needs_defaults = True
-        if not df.empty:
-            # Check if any row has meaningful user data
-            has_users = False
-            for user_val in df['user']:
-                if pd.notna(user_val) and str(user_val).strip() != '':
-                    has_users = True
-                    break
-            needs_defaults = not has_users
-        
-        if needs_defaults:
-            # Default wager combinations
-            default_wagers = [
-                ("A.J. Wolfe", "Joe Burrow over X passing yards"),
-                ("Clark Lee", "Lamar Jackson over X passing yards"),
-                ("Clayton Horan", "C.J. Stroud over X passing yards"),
-                ("Kyle Francis", "Brock Purdy over X passing yards"),
-                ("Preston 'OP' Browne", "Bo Nix over X passing yards"),
-                ("Preston Young", "Patrick Mahomes over X passing yards"),
-                ("Tanner Nordeen", "Jalen Hurts over X passing yards"),
-                ("Teddy MacDonell", "Jayden Daniels over X passing yards"),
-                ("Trask Bottum", "Baker Mayfield over X passing yards"),
-                ("Zaq Levick", "Josh Allen over X passing yards")
-            ]
+        try:
+            # Get all data from sheet
+            all_data = self.sheet.get_all_records()
+            df = pd.DataFrame(all_data)
             
-            df = pd.DataFrame({
-                'week_number': [week_num] * 10,
-                'position': list(range(1, 11)),
-                'user': [wager[0] for wager in default_wagers],
-                'moneyline_symbol': ['-'] * 10,
-                'moneyline_value': [110] * 10,
-                'wager_detail': [wager[1] for wager in default_wagers],
-                'status': ['pending'] * 10,
-                'updated_at': [None] * 10
-            })
+            # Filter for the specific week
+            if not df.empty and 'Week' in df.columns:
+                week_df = df[df['Week'] == week_num].copy()
+                
+                # Rename columns to match expected format
+                if not week_df.empty:
+                    week_df = week_df.rename(columns={
+                        'Week': 'week_number',
+                        'Position': 'position', 
+                        'User': 'user',
+                        'Moneyline_Symbol': 'moneyline_symbol',
+                        'Moneyline_Value': 'moneyline_value',
+                        'Wager_Detail': 'wager_detail',
+                        'Status': 'status',
+                        'Updated_At': 'updated_at'
+                    })
+                    week_df = week_df.sort_values('position')
+                else:
+                    week_df = pd.DataFrame()
+            else:
+                week_df = pd.DataFrame()
+            
+            # Check if we need to apply default wagers
+            needs_defaults = True
+            if not week_df.empty:
+                has_users = False
+                for user_val in week_df['user']:
+                    if pd.notna(user_val) and str(user_val).strip() != '':
+                        has_users = True
+                        break
+                needs_defaults = not has_users
+            
+            if needs_defaults:
+                return self._get_default_wagers_df(week_num)
+            
+            return week_df
+            
+        except Exception as e:
+            st.error(f"Error loading data from Google Sheets: {e}")
+            return self._get_default_wagers_df(week_num)
+    
+    def _get_default_wagers_df(self, week_num: int) -> pd.DataFrame:
+        """Generate default wagers dataframe"""
+        default_wagers = [
+            ("A.J. Wolfe", "Joe Burrow over X passing yards"),
+            ("Clark Lee", "Lamar Jackson over X passing yards"),
+            ("Clayton Horan", "C.J. Stroud over X passing yards"),
+            ("Kyle Francis", "Brock Purdy over X passing yards"),
+            ("Preston 'OP' Browne", "Bo Nix over X passing yards"),
+            ("Preston Young", "Patrick Mahomes over X passing yards"),
+            ("Tanner Nordeen", "Jalen Hurts over X passing yards"),
+            ("Teddy MacDonell", "Jayden Daniels over X passing yards"),
+            ("Trask Bottum", "Baker Mayfield over X passing yards"),
+            ("Zaq Levick", "Josh Allen over X passing yards")
+        ]
         
-        return df
+        return pd.DataFrame({
+            'week_number': [week_num] * 10,
+            'position': list(range(1, 11)),
+            'user': [wager[0] for wager in default_wagers],
+            'moneyline_symbol': ['-'] * 10,
+            'moneyline_value': [110] * 10,
+            'wager_detail': [wager[1] for wager in default_wagers],
+            'status': ['pending'] * 10,
+            'updated_at': [None] * 10
+        })
     
     def save_wager(self, week_num: int, position: int, wager_data: Dict):
-        """Save or update a single wager"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            INSERT OR REPLACE INTO wagers 
-            (week_number, position, user, moneyline_symbol, moneyline_value, 
-             wager_detail, status, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            week_num,
-            position,
-            wager_data.get('user'),
-            wager_data.get('moneyline_symbol'),
-            wager_data.get('moneyline_value'),
-            wager_data.get('wager_detail', ''),
-            wager_data.get('status', 'pending'),
-            datetime.now()
-        ))
-        
-        conn.commit()
-        conn.close()
+        """Save or update a single wager in Google Sheets"""
+        wagers_list = [dict(wager_data, position=position)]
+        self.save_all_week_wagers(week_num, wagers_list)
     
     def save_all_week_wagers(self, week_num: int, wagers_list: List[Dict]):
-        """Save all wagers for a week at once"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        """Save all wagers for a week to Google Sheets"""
+        if not self.sheet:
+            st.error("Google Sheets not initialized")
+            return
         
-        for wager_data in wagers_list:
-            cursor.execute('''
-                INSERT OR REPLACE INTO wagers 
-                (week_number, position, user, moneyline_symbol, moneyline_value, 
-                 wager_detail, status, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                week_num,
-                wager_data.get('position'),
-                wager_data.get('user') if wager_data.get('user') else None,
-                wager_data.get('moneyline_symbol') if wager_data.get('moneyline_symbol') else None,
-                wager_data.get('moneyline_value') if wager_data.get('moneyline_value') else None,
-                wager_data.get('wager_detail', ''),
-                wager_data.get('status', 'pending'),
-                datetime.now()
-            ))
-        
-        conn.commit()
-        conn.close()
+        try:
+            # First, remove existing data for this week
+            self.clear_week(week_num)
+            
+            # Prepare rows to append
+            rows_to_add = []
+            for wager_data in wagers_list:
+                row = [
+                    week_num,
+                    wager_data.get('position'),
+                    wager_data.get('user') or '',
+                    wager_data.get('moneyline_symbol') or '',
+                    wager_data.get('moneyline_value') or '',
+                    wager_data.get('wager_detail') or '',
+                    wager_data.get('status') or 'pending',
+                    datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                ]
+                rows_to_add.append(row)
+            
+            # Append all rows at once
+            if rows_to_add:
+                self.sheet.append_rows(rows_to_add)
+            
+        except Exception as e:
+            st.error(f"Error saving to Google Sheets: {e}")
     
     def clear_week(self, week_num: int):
-        """Clear all wagers for a week"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        """Clear all wagers for a week from Google Sheets"""
+        if not self.sheet:
+            return
         
-        cursor.execute('DELETE FROM wagers WHERE week_number = ?', (week_num,))
-        
-        conn.commit()
-        conn.close()
+        try:
+            # Get all data and find rows to delete
+            all_data = self.sheet.get_all_values()
+            rows_to_delete = []
+            
+            # Find rows with matching week number (skip header row)
+            for i, row in enumerate(all_data[1:], start=2):
+                if row and str(row[0]) == str(week_num):
+                    rows_to_delete.append(i)
+            
+            # Delete rows in reverse order to maintain indices
+            for row_num in reversed(rows_to_delete):
+                self.sheet.delete_rows(row_num)
+                
+        except Exception as e:
+            st.error(f"Error clearing week data: {e}")
     
     def export_week_data(self, week_num: int) -> pd.DataFrame:
         """Export week data for download"""
