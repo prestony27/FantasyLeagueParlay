@@ -17,19 +17,31 @@ class DataManager:
     def init_google_sheets(self):
         """Initialize Google Sheets connection"""
         try:
-            # Try to get credentials from Streamlit secrets first, but catch all errors
+            # Debug: Show what environment we're in
+            import os
+            is_cloud = os.getenv('STREAMLIT_SHARING_MODE') or 'streamlit.app' in os.getenv('HOSTNAME', '')
+            
+            # Try to get credentials from Streamlit secrets first
             secrets_worked = False
-            try:
-                # Check if we're in Streamlit Cloud environment
-                if hasattr(st, 'secrets'):
-                    # Try to access secrets - this might raise an error
-                    secrets_dict = dict(st.secrets)
-                    if 'gcp_service_account' in secrets_dict:
-                        # Check if it's a placeholder or real credentials
+            if hasattr(st, 'secrets'):
+                try:
+                    # Check if gcp_service_account exists in secrets
+                    if 'gcp_service_account' in st.secrets:
                         gcp_config = st.secrets["gcp_service_account"]
-                        if isinstance(gcp_config, dict) and 'use_json_file' not in gcp_config:
+                        
+                        # Debug info
+                        st.write(f"Debug: Found gcp_service_account in secrets")
+                        st.write(f"Debug: Is cloud environment: {is_cloud}")
+                        st.write(f"Debug: Config type: {type(gcp_config)}")
+                        
+                        # Check if it's real credentials (not local placeholder)
+                        if (isinstance(gcp_config, dict) and 
+                            'use_json_file' not in gcp_config and
+                            'type' in gcp_config and 
+                            'private_key' in gcp_config):
+                            
                             credentials = Credentials.from_service_account_info(
-                                gcp_config,
+                                dict(gcp_config),  # Convert to regular dict
                                 scopes=[
                                     "https://www.googleapis.com/auth/spreadsheets",
                                     "https://www.googleapis.com/auth/drive"
@@ -37,21 +49,30 @@ class DataManager:
                             )
                             self.gc = gspread.authorize(credentials)
                             secrets_worked = True
-            except Exception:
-                # Any exception means we should try local files
-                secrets_worked = False
+                            st.success("✅ Using Streamlit Cloud secrets")
+                        else:
+                            st.info("📝 Secrets found but appear to be local placeholder")
+                    else:
+                        st.warning("⚠️ No gcp_service_account found in secrets")
+                except Exception as e:
+                    st.error(f"❌ Error accessing secrets: {e}")
+            else:
+                st.info("📝 No st.secrets available")
             
             # If secrets didn't work, try local files
             if not secrets_worked:
                 try:
                     # Try the specific filename first
                     self.gc = gspread.service_account(filename='fantasyleagueparlay-db08b4958741.json')
+                    st.success("✅ Using fantasyleagueparlay-db08b4958741.json")
                 except FileNotFoundError:
                     try:
                         # Try generic filename
                         self.gc = gspread.service_account(filename='service_account.json')
+                        st.success("✅ Using service_account.json")
                     except FileNotFoundError:
-                        st.error("Google Sheets credentials not found. Please check setup instructions.")
+                        st.error("❌ Google Sheets credentials not found. Please check setup instructions.")
+                        st.error("Looking for: fantasyleagueparlay-db08b4958741.json or service_account.json")
                         return
             
             # Try to open existing sheet or create new one
