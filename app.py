@@ -15,21 +15,40 @@ def main():
     initialize_session_state()
     
     st.title("🏈 10-Leg Parlay Dashboard")
-    
+
     current_week = get_current_nfl_week()
-    st.info(f"Current NFL Week: {current_week}")
-    
-    week_tabs = st.tabs([f"Week {i}" for i in range(2, NUM_WEEKS + 1)])
-    
-    for week_num, tab in enumerate(week_tabs, 2):
-        with tab:
-            render_week_dashboard(week_num)
+
+    # Week selection
+    col1, col2, col3 = st.columns([2, 1, 2])
+
+    with col1:
+        st.info(f"Current NFL Week: {current_week}")
+        st.markdown("Access FanDuel's Odds here: [https://sportsbook.fanduel.com/navigation/nfl](https://sportsbook.fanduel.com/navigation/nfl)")
+
+    with col2:
+        selected_week = st.selectbox(
+            "Select Week:",
+            options=list(range(2, NUM_WEEKS + 1)),
+            index=st.session_state.selected_week - 2,  # Convert to 0-based index
+            key="week_selector"
+        )
+        st.session_state.selected_week = selected_week
+
+    with col3:
+        if st.button("Go to Current Week", type="primary"):
+            st.session_state.selected_week = current_week
+            st.rerun()
+
+    # Render the selected week
+    render_week_dashboard(st.session_state.selected_week)
 
 def initialize_session_state():
     if 'data_manager' not in st.session_state:
         st.session_state.data_manager = DataManager()
     if 'calculator' not in st.session_state:
         st.session_state.calculator = ParlayCalculator()
+    if 'selected_week' not in st.session_state:
+        st.session_state.selected_week = get_current_nfl_week()
 
 def render_week_dashboard(week_num: int):
     wagers = st.session_state.data_manager.load_week_wagers(week_num)
